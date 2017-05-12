@@ -17,109 +17,105 @@ my $found=0;
 
 my $in;
 
-#if ($#ARGV > 0) {
-#    open ($in, $ARGV[-1]) || die "can't open $ARGV[-1]";
-#} else {
-#    $in = "STDIN";
-#}
-
 my $value;
-
-# if ($#ARGV > 0 && $ARGV[-2] !~ /^-/) {
-#     open ($in, $ARGV[-1]) || die "can't open $ARGV[-1]";
-#     $value = $ARGV[-2];
-# } else {
-#     $in = "STDIN";
-#     $value = $ARGV[-1];
-# }
 
 my %opts;
 getopt('is', \%opts);
 
-#if ($#ARGV > 0 && ($argv_neg2 !~ /^-/ || exists $opts{s})) {
-if ($argv_count > 0 && ($argv_neg2 !~ /^-/ || exists $opts{s})) {
-    print "opening argv_neg1\n";
+if ($argv_count > 0 && ($argv_neg2 !~ /^\-/ || exists $opts{s})) {
     open ($in, $argv_neg1) || die "can't open $argv_neg1";
-    $value = $argv_neg2 unless (exists $opts{s});
+    $value = $argv_neg2 if ($argv_neg2 !~ /^\-/);
 } else {
     $in = "STDIN";
     $value = $argv_neg1;
 }
 
+
 my %conns;
+my %conns_summary;
 my %matching_conns;
-my %summary;
-my $conn_from = "none";
+my $conn_from;
+my $search;
+my $saved_conn;
 
 while (<$in>) {
     chomp;
 
     my $conn;
     next unless (($conn) = /conn=(\d+)\s+/);
+    push @{$conns{$conn}}, $_;
 
-    if (exists $opts{s}) {
-	# if (my ($conn_from) = /connection from (\d+\.\d+\.\d+\.\d+) /) {
-	#     print "connect from: /$conn_from/\n";
-	# }
-	# if (my ($bind) = /BIND dn=\"([^\"]+)\"/) {
-	#     print "bind: /$bind/\n";
-	# }
-
-	$conn_from = $1
-	  if (/connection from (\d+\.\d+\.\d+\.\d+) /);
-
-	my $bind;
-	$bind = $1
-	  if (/BIND dn=\"([^\"]+)\"/);
-
-	if (defined $bind) {
-	    print "in if\n";
-	    if (defined $conn_from) {
-		print "adding $bind $conn_from\n";
-		$summary{$bind . " " . $conn_from} = 1
-	    } else {
-		print "adding $bind\n";
-		$summary{$bind} = 1
-	    }
-	    $conn_from = undef;
-	}
-
-
+    if (!defined $value) {
+	# if no value was passed from the command line all connections match
+	$matching_conns{$conn} = 1;
+    } elsif (exists $opts{i}) {
+	# case insensitive
+	$matching_conns{$conn} = 1
+	  if (/$value/i);
     } else {
-	# my $conn;
-	# next unless (($conn) = /conn=(\d+)\s+/);
+	# case sensitive
+	$matching_conns{$conn} = 1
+	  if (/$value/);
+    }
 
-	push @{$conns{$conn}}, $_;
+    if (exists $matching_conns{$conn}) {
+	if (exists $opts{s}) {
+	    for (@{$conns{$conn}}) {
+		if (/connection from (\d+\.\d+\.\d+\.\d+) /) {
+		    push @{$conns_summary{$conn}}, $1
+		}
 
-	my $match=0;
+		if ((/(SRCH) base="[^"]*" scope=\d+ filter="([^"]+)"/) ||
+		    (/(MOD) dn="([^"]+)"/) ||
+		    (/(BIND) dn="([^"]+)"/)) {
+		    if (!exists $conns_summary{$conn}) {
+			push @{$conns_summary{$conn}}, "no_connection_info";
+		    }
+		    push @{$conns_summary{$conn}}, $1 . $2
+		}
 
-	if (exists $opts{i}) {
-	    $match = 1
-	      if (/$value/i);
-	} else {
-	    $match = 1
-	      if (/$value/);
-	}
-
-	#    if (/$value/i) {
-	if ($match) {
-	    $matching_conns{$conn} = 1;
-	    if (exists $conns{$conn}) {
-		print @{$conns{$conn}};
-		delete $conns{$conn}
 	    }
-	} elsif (exists $matching_conns{$conn}) {
-	    print "$_";
-	    pop @{$conns{$conn}};
+	} 
+	if (!exists $opts{s} || (exists $opts{s} && defined $value)) {
+	    # the idea is we don't want to print if we're generating a summary of all log entries
+	    print @{$conns{$conn}};
 	}
+
+	delete $conns{$conn}
     }
 }
 
-# if (exists $opts{s}) {
-#     for my $k (sort keys %summary) {
-# 	print $k . "\n";
-#     }
-# }
+
+
+
+if (exists $opts{s}) {
+    print "\n***Summary:\n";
+    $,="";
+
+    my %summary;
+    
+    for my $c (keys %conns_summary) {
+	my $ip = shift @{$conns_summary{$c}};
+	push @{$summary{$ip}}, @{$conns_summary{$c}}
+    }
+
+    for my $ip (keys %summary) {
+	my %unique_summary_values;
+	for my $summary_value (@{$summary{$ip}}) {
+	    $unique_summary_values{$summary_value} = 1;
+	}
+	@{$summary{$ip}} = sort keys %unique_summary_values;
+    }
+
+    for my $ip (keys %summary) {
+	if (defined $summary{$ip}) {
+	    print $ip, " ", join (' ', @{$summary{$ip}});
+	} else {
+	    print $ip . "\n";
+	}
+    }
+
+}
 
 
 
@@ -133,3 +129,4 @@ sub print_usage() {
     print "\n";
     exit;
 }
+
